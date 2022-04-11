@@ -5,16 +5,16 @@ import (
 )
 
 type RingBuffer struct {
-	buf        []byte // actual data
-	size        int // buffer size in bytes
-	r, w		int // read/write cursors
-	t			int // total bytes written in buffer
+	buf  []byte // actual data
+	size int    // buffer size in bytes
+	r, w int    // read/write cursors
+	t    int    // total bytes written in buffer
 }
 
 var (
-	ErrZeroSize = errors.New("Can't create zero-size buffer")
-	ErrZeroRead = errors.New("Can't read from empty buffer")
-	ErrEmptyBuffer = errors.New("Buffer is empty")
+	ErrZeroSize       = errors.New("Can't create zero-size buffer")
+	ErrZeroRead       = errors.New("Can't read from empty buffer")
+	ErrEmptyBuffer    = errors.New("Buffer is empty")
 	ErrBufferOverflow = errors.New("Can't read from empty buffer")
 )
 
@@ -26,9 +26,13 @@ func NewRingBuffer(n int) (*RingBuffer, error) {
 
 	b := &RingBuffer{
 		size: n,
-		buf: make([]byte, n),
+		buf:  make([]byte, n),
 	}
 	return b, nil
+}
+
+func (b *RingBuffer) Size() int {
+	return b.size
 }
 
 // Write to buff. Override if full.
@@ -42,11 +46,11 @@ func (b *RingBuffer) Write(p []byte) (int, error) {
 	if b.w < b.r && b.r-b.w <= l {
 		return -1, ErrBufferOverflow
 	}
-	if b.w > b.r && b.size - b.w + b.r <= l {
+	if b.w > b.r && b.size-b.w+b.r <= l {
 		return -1, ErrBufferOverflow
 	}
 
-	// if we try to write more bytes than 
+	// if we try to write more bytes than
 	// buf can store, we write only last SIZE bytes
 	// this will never happen because of pervious overflow check
 	if int(l) > b.size {
@@ -90,7 +94,7 @@ func (b *RingBuffer) Read(p []byte) (n int, err error) {
 		return
 	}
 
-	// if write cursor before read but we still can fit 
+	// if write cursor before read but we still can fit
 	n = b.size - b.r + b.w
 	if n > len(p) {
 		n = len(p)
@@ -105,7 +109,6 @@ func (b *RingBuffer) Read(p []byte) (n int, err error) {
 	}
 
 	b.r = (b.r + n) % b.size
-
 
 	return n, err
 }
