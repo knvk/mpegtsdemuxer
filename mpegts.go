@@ -28,7 +28,10 @@ const (
 )
 
 var (
-	VIDEO_PID uint32 = 200
+	VIDEO_PID    uint32 = 200
+	ccLast       uint8
+	ccCounter    uint32
+	totalPackets uint64
 	// errors
 	ErrPesStartCode = errors.New("PES wrong start code prefix (must be 0x000001)")
 	ErrSyncByte     = errors.New("No Sync byte (0x47)")
@@ -48,14 +51,15 @@ func NewDemuxer(rd io.Reader, buf *RingBuffer) *Demuxer {
 
 type TSPacket struct {
 	tsHeader []byte
+	Payload  bool
 	PUSI     bool
 	PID      uint32
 	CC       uint8
-	payload  []byte
+	Data     []byte
 }
 
 func (tsp *TSPacket) ParsePes() error {
-	p := tsp.payload
+	p := tsp.Data
 	if !(p[0] == 0x00 && p[1] == 0x00 && p[2] == 0x01) {
 		log.Printf("error; payload: %x\n", p)
 		return ErrPesStartCode
@@ -82,25 +86,38 @@ func NewTSPacket(d *[]byte) {
 		payloadOffset += AFLen + 1
 	}
 	var p TSPacket
-	p.payload = (*d)[payloadOffset:]
+	p.Data = (*d)[payloadOffset:]
 	p.tsHeader = (*d)[0:4]
 	p.PUSI = (binary.BigEndian.Uint32(p.tsHeader) & 0x400000) != 0
 	p.PID = (binary.BigEndian.Uint32(p.tsHeader) & 0x1fff00) >> 8
 	p.CC = uint8(binary.BigEndian.Uint32(p.tsHeader) & 0xf)
+	if (binary.BigEndian.Uint32(p.tsHeader) & 0x10) > 0 {
+		p.Payload = true
+	} else {
+		p.Payload = false
+	}
+	p.Analyze()
+}
+
+func (p *TSPacket) Analyze() {
 
 	if p.tsHeader[0] != SYNC_BYTE {
-		log.Println("SyncByte Error")
+		log.Printf("SyncByte Error\n")
 		//return -1, ErrSyncByte
 	}
-	/* cc error counter
-		if PID == VIDEO_PID {
-			log.Printf("CC: %d\n", CC)
-	        }
-	*/
-	if p.PUSI && p.PID == 200 {
+	if p.PID == VIDEO_PID {
+		if p.Payload && p.CC != (ccLast+1)&0xf {
+			log.Printf("CC error\n")
+			ccCounter++
+		}
+		ccLast = p.CC
+	}
+
+	if p.PUSI && p.PID == VIDEO_PID {
 		//log.Printf("PID: %4d Header: %x (HLen: %d) PUSI: %v\n", p.PID, p.tsHeader, len(p.tsHeader), p.PUSI)
 		//fmt.Println(payload)
-		p.ParsePes()
+		//p.ParsePes()
+		//continue
 	}
 }
 
@@ -128,8 +145,8 @@ func (d *Demuxer) Parse() (i int, err error) {
 		d.b.Write(buf)
 		d.b.Read(analyze_buf)
 		NewTSPacket(&analyze_buf)
-		i++
-		if i%100000 == 0 {
+		totalPackets++
+		if totalPackets%100000 == 0 {
 			runtime.ReadMemStats(&m)
 			fmt.Printf("Alloc = %v MiB\tTotalAlloc = %2v MiB\tSys = %v MiB\tNumGC = %v\n", m.Alloc/1024/1024, m.TotalAlloc/1024/1024, m.Sys/1024/1024, m.NumGC)
 		}
@@ -155,7 +172,7 @@ func main() {
 	demux := NewDemuxer(bufio.NewReaderSize(f, TS_PACKET_SIZE*1024), b)
 
 	if cs, err := demux.Parse(); err != nil {
-		log.Printf("Total MPEGTS packets: %d\n", cs)
+		log.Printf("Total MPEGTS packets: %d CC errors: %d\n", cs, ccCounter)
 		log.Println(err.Error())
 	}
 	log.Printf("[buffer] Total bytes written: %d\tWrite positsion: %d\tRead position: %d\n", b.t, b.w, b.r)
